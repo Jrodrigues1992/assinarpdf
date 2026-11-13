@@ -103,6 +103,18 @@ body{margin:0;height:100%;display:flex;flex-direction:column;background:var(--bg
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(96px + env(safe-area-inset-bottom,0px));z-index:30;
   max-width:min(92vw,420px);padding:10px 16px;border-radius:10px;background:#16202e;color:#fff;font-size:14px;box-shadow:var(--shadow)}
 @media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
+.bar .btn{padding:0 6px;font-size:15px}
+.menu{display:flex;flex-direction:column;gap:8px}
+.menu .btn{width:100%;text-align:left;min-height:50px;padding:0 16px}
+#printArea{display:none}
+@media print{
+  @page{margin:0}
+  body>*:not(#printArea){display:none!important}
+  html,body{height:auto!important;background:#fff!important;display:block!important}
+  :root{padding:0!important}
+  #printArea{display:block!important}
+  #printArea img{display:block;width:100%;max-height:100vh;object-fit:contain;break-after:page;page-break-after:always}
+}
 </style>
 </head>
 <body>
@@ -131,8 +143,9 @@ body{margin:0;height:100%;display:flex;flex-direction:column;background:var(--bg
 
 <nav class="bar" aria-label="Ações">
   <button class="btn" id="signBtn" type="button" disabled>Assinar</button>
-  <button class="btn" id="textBtn" type="button" disabled>Texto ou data</button>
-  <button class="btn primary" id="saveBtn" type="button" disabled>Salvar PDF</button>
+  <button class="btn" id="textBtn" type="button" disabled>Texto</button>
+  <button class="btn" id="moreBtn" type="button" disabled>Mais</button>
+  <button class="btn primary" id="saveBtn" type="button" disabled>Salvar</button>
 </nav>
 
 <input type="file" id="file" accept="application/pdf,.pdf" hidden>
@@ -185,6 +198,21 @@ body{margin:0;height:100%;display:flex;flex-direction:column;background:var(--bg
   </div>
 </div>
 
+<!-- Mais ações -->
+<div class="modal" id="moreModal" role="dialog" aria-modal="true" aria-labelledby="moreTitle" hidden>
+  <div class="sheet">
+    <h2 id="moreTitle">Mais ações</h2>
+    <div class="menu">
+      <button class="btn" id="rotPage" type="button">Girar esta página</button>
+      <button class="btn" id="rotAll" type="button">Girar todas as páginas</button>
+      <button class="btn" id="printBtn" type="button">Imprimir</button>
+      <button class="btn" id="shareBtn" type="button">Enviar por e-mail ou outro app</button>
+    </div>
+    <div class="row"><button class="btn" id="moreClose" type="button">Fechar</button></div>
+  </div>
+</div>
+<div id="printArea" aria-hidden="true"></div>
+
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
 <script>
@@ -197,7 +225,7 @@ var WORKER = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.
 var SIG_KEY = 'assinar-pdf:assinatura';
 
 var viewer = $('#viewer');
-var state = { bytes:null, name:'documento.pdf', pdf:null, pages:[], items:[], sel:null, nextId:1, busy:false };
+var state = { bytes:null, name:'documento.pdf', pdf:null, pages:[], items:[], sel:null, nextId:1, busy:false, built:null };
 var observer = null;
 
 /* ---------- utilidades ---------- */
@@ -206,6 +234,8 @@ function toast(msg){
   var t = $('#toast'); t.textContent = msg; t.hidden = false;
   clearTimeout(toastTimer); toastTimer = setTimeout(function(){ t.hidden = true; }, 4200);
 }
+function touch(){ state.built = null; }
+function setBusy(b){ state.busy = b; updateUI(); }
 function openModal(id){ var m = $(id); m.hidden = false; return m; }
 function closeModal(id){ $(id).hidden = true; }
 function loadImg(src){
@@ -242,7 +272,7 @@ async function openFile(file){
     var pdf = await pdfjsLib.getDocument({ data: bytes.slice(), isEvalSupported:false }).promise;
 
     state.bytes = bytes; state.name = file.name || 'documento.pdf'; state.pdf = pdf;
-    state.items = []; state.sel = null; state.pages = [];
+    state.items = []; state.sel = null; state.pages = []; state.built = null;
     if (observer) observer.disconnect();
     viewer.innerHTML = '';
     $('#selbar').hidden = true;
@@ -266,7 +296,7 @@ async function openFile(file){
       var ov = document.createElement('div'); ov.className = 'ov';
       wrap.appendChild(canvas); wrap.appendChild(ov);
       viewer.appendChild(wrap);
-      state.pages.push({ wrap:wrap, canvas:canvas, ov:ov, w:vp.width, h:vp.height, rendered:false, renderedW:0, index:i-1 });
+      state.pages.push({ wrap:wrap, canvas:canvas, ov:ov, w:vp.width, h:vp.height, rendered:false, renderedW:0, index:i-1, base:(((pg.rotate || 0) % 360) + 360) % 360, extra:0 });
       observer.observe(wrap);
     }
     viewer.scrollTop = 0;
@@ -285,7 +315,7 @@ async function renderPage(p){
     var pg = await state.pdf.getPage(p.index + 1);
     var cssW = p.wrap.clientWidth || 600;
     var dpr = Math.min(window.devicePixelRatio || 1, 2);
-    var vp = pg.getViewport({ scale: (cssW / p.w) * dpr });
+    var vp = pg.getViewport({ scale: (cssW / p.w) * dpr, rotation: (p.base + p.extra) % 360 });
     p.canvas.width = Math.floor(vp.width); p.canvas.height = Math.floor(vp.height);
     p.renderedW = cssW;
     await pg.render({ canvasContext: p.canvas.getContext('2d'), viewport: vp }).promise;
@@ -351,7 +381,7 @@ function clampItem(it){
 function bindDrag(it){
   var el = it.el, st = null;
   el.addEventListener('pointerdown', function(e){
-    e.preventDefault(); select(it.id);
+    e.preventDefault(); touch(); select(it.id);
     st = { sx:e.clientX, sy:e.clientY, x:it.x, y:it.y, r:state.pages[it.page].wrap.getBoundingClientRect() };
     el.setPointerCapture(e.pointerId);
   });
@@ -364,7 +394,7 @@ function bindDrag(it){
   el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
   el.addEventListener('keydown', function(e){
     var d = 0.01, m = { ArrowLeft:[-d,0], ArrowRight:[d,0], ArrowUp:[0,-d], ArrowDown:[0,d] }[e.key];
-    if (m){ e.preventDefault(); it.x += m[0]; it.y += m[1]; clampItem(it); place(it); }
+    if (m){ e.preventDefault(); touch(); it.x += m[0]; it.y += m[1]; clampItem(it); place(it); }
     else if (e.key === 'Delete' || e.key === 'Backspace'){ e.preventDefault(); removeSel(); }
   });
 }
@@ -380,7 +410,7 @@ viewer.addEventListener('pointerdown', function(e){
   if (!e.target.closest('.item') && state.sel != null) select(null);
 });
 function addItem(it){
-  it.id = state.nextId++; state.items.push(it); mountItem(it); clampItem(it); place(it);
+  touch(); it.id = state.nextId++; state.items.push(it); mountItem(it); clampItem(it); place(it);
   select(it.id); updateUI();
 }
 function scaleSel(f){
@@ -388,14 +418,14 @@ function scaleSel(f){
   var p = state.pages[it.page];
   var cw = p.wrap.clientWidth, ch = p.wrap.clientHeight;
   var cx = it.x + (it.el.offsetWidth / cw) / 2, cy = it.y + (it.el.offsetHeight / ch) / 2;
-  if (it.kind === 'sig') it.w = clamp(it.w * f, 0.06, 0.95); else it.size = clamp(it.size * f, 0.012, 0.12);
+  touch(); if (it.kind === 'sig') it.w = clamp(it.w * f, 0.06, 0.95); else it.size = clamp(it.size * f, 0.012, 0.12);
   place(it);
   it.x = cx - (it.el.offsetWidth / cw) / 2; it.y = cy - (it.el.offsetHeight / ch) / 2;
   clampItem(it); place(it);
 }
 function removeSel(){
   var it = getSel(); if (!it) return;
-  it.el.remove(); state.items = state.items.filter(function(i){ return i !== it; });
+  touch(); it.el.remove(); state.items = state.items.filter(function(i){ return i !== it; });
   select(null); updateUI();
 }
 $('#bigger').addEventListener('click', function(){ scaleSel(1.15); });
@@ -406,7 +436,9 @@ function updateUI(){
   var has = state.pages.length > 0;
   $('#empty').hidden = has;
   $('#signBtn').disabled = !has; $('#textBtn').disabled = !has;
-  $('#saveBtn').disabled = !(has && state.items.length) || state.busy;
+  $('#moreBtn').disabled = !has || state.busy;
+  var changed = state.items.length > 0 || state.pages.some(function(p){ return p.extra; });
+  $('#saveBtn').disabled = !(has && changed) || state.busy;
 }
 
 /* ---------- caderno de assinatura ---------- */
@@ -497,60 +529,154 @@ function confirmText(){
 $('#textOk').addEventListener('click', confirmText);
 $('#textInput').addEventListener('keydown', function(e){ if (e.key === 'Enter') confirmText(); });
 
-/* ---------- salvar ---------- */
+/* ---------- girar páginas ---------- */
+function rotatePage(p, deg){
+  var hasItems = state.items.some(function(i){ return state.pages[i.page] === p; });
+  if (hasItems) return false;
+  touch();
+  p.extra = (p.extra + deg) % 360;
+  if (deg % 180 !== 0){ var t = p.w; p.w = p.h; p.h = t; }
+  p.wrap.style.aspectRatio = p.w + ' / ' + p.h;
+  p.rendered = false; observer.unobserve(p.wrap); observer.observe(p.wrap);
+  updateUI();
+  return true;
+}
+
+/* ---------- gerar o PDF ---------- */
 function safeText(font, t){
   return Array.from(t).map(function(ch){ try { font.encodeText(ch); return ch; } catch(e){ return '?'; } }).join('');
 }
-async function savePdf(){
-  if (state.busy || !state.items.length) return;
-  state.busy = true; updateUI(); toast('Gerando o PDF…');
-  try {
-    var L = PDFLib;
-    var doc = await L.PDFDocument.load(state.bytes, { ignoreEncryption:true });
-    var font = await doc.embedFont(L.StandardFonts.Helvetica);
-    var cache = {}, rotated = false;
-    for (var k = 0; k < state.items.length; k++){
-      var it = state.items[k], page = doc.getPage(it.page);
-      var cb = page.getCropBox(), W = cb.width, H = cb.height;
-      if (page.getRotation().angle % 360 !== 0) rotated = true;
-      if (it.kind === 'sig'){
-        var img = cache[it.src] || (cache[it.src] = await doc.embedPng(it.src));
-        var w = it.w * W, h = w / it.aspect;
-        page.drawImage(img, { x: cb.x + it.x * W, y: cb.y + H - it.y * H - h, width:w, height:h });
-      } else {
-        var fs = it.size * W;
-        page.drawText(safeText(font, it.text), { x: cb.x + it.x * W, y: cb.y + H - it.y * H - fs * 0.84, size:fs, font:font, color:L.rgb(0.063, 0.137, 0.42) });
-      }
-    }
-    var out = await doc.save();
-    var filename = state.name.replace(/\.pdf$/i, '') + '-assinado.pdf';
-    var blob = new Blob([out], { type:'application/pdf' });
-    var dl = null;
-    try { dl = (window.claude && window.claude.use) ? await window.claude.use('downloads') : null; } catch(e){ dl = null; }
-    if (dl){
-      try {
-        await dl.save({ filename:filename, data:blob });
-        openModal('#doneModal'); $('#doneClose').focus();
-        if (rotated) toast('Atenção: há páginas giradas no PDF; confira a posição da assinatura.');
-      } catch(e){
-        if (!e || e.code !== 'declined') toast('Não foi possível salvar o arquivo neste visualizador.');
-      }
+async function buildPdf(){
+  if (state.built) return state.built;
+  var L = PDFLib;
+  var doc = await L.PDFDocument.load(state.bytes, { ignoreEncryption:true });
+  var font = await doc.embedFont(L.StandardFonts.Helvetica);
+  var cache = {};
+  state.pages.forEach(function(p, i){
+    if (p.extra) doc.getPage(i).setRotation(L.degrees((p.base + p.extra) % 360));
+  });
+  for (var k = 0; k < state.items.length; k++){
+    var it = state.items[k], p = state.pages[it.page], page = doc.getPage(it.page);
+    var cb = page.getCropBox(), W = cb.width, H = cb.height, r = (p.base + p.extra) % 360;
+    var Wd = (r % 180 === 0) ? W : H, Hd = (r % 180 === 0) ? H : W;
+    var rad = r * Math.PI / 180, cos = Math.cos(rad), sin = Math.sin(rad);
+    var toPage = function(dx, dy){
+      if (r === 90) return { x:dy, y:dx };
+      if (r === 180) return { x:W - dx, y:dy };
+      if (r === 270) return { x:W - dy, y:H - dx };
+      return { x:dx, y:H - dy };
+    };
+    var turn = function(lx, ly){ return { x: lx * cos - ly * sin, y: lx * sin + ly * cos }; };
+    if (it.kind === 'sig'){
+      var img = cache[it.src] || (cache[it.src] = await doc.embedPng(it.src));
+      var wp = it.w * Wd, hp = wp / it.aspect;
+      var c1 = toPage(it.x * Wd + wp / 2, it.y * Hd + hp / 2), o1 = turn(-wp / 2, -hp / 2);
+      page.drawImage(img, { x: cb.x + c1.x + o1.x, y: cb.y + c1.y + o1.y, width:wp, height:hp, rotate:L.degrees(r) });
     } else {
-      var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename;
-      document.body.appendChild(a); a.click(); a.remove();
-      toast('Se o download não começar, abra esta página direto no navegador.');
+      var fs = it.size * Wd, t = safeText(font, it.text), tw = font.widthOfTextAtSize(t, fs);
+      var c2 = toPage(it.x * Wd + tw / 2, it.y * Hd + fs / 2), o2 = turn(-tw / 2, -fs * 0.34);
+      page.drawText(t, { x: cb.x + c2.x + o2.x, y: cb.y + c2.y + o2.y, size:fs, font:font,
+        color:L.rgb(0.063, 0.137, 0.42), rotate:L.degrees(r) });
     }
-  } catch(e){
-    console.error(e); toast('Algo deu errado ao gerar o PDF.');
-  } finally {
-    state.busy = false; updateUI();
+  }
+  var bytes = await doc.save();
+  state.built = { bytes:bytes, filename: state.name.replace(/\.pdf$/i, '') + '-assinado.pdf' };
+  return state.built;
+}
+
+async function deliverDownload(blob, filename){
+  var dl = null;
+  try { dl = (window.claude && window.claude.use) ? await window.claude.use('downloads') : null; } catch(e){ dl = null; }
+  if (dl){
+    await dl.save({ filename:filename, data:blob });
+  } else {
+    var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
   }
 }
+
+async function savePdf(){
+  if (state.busy) return;
+  setBusy(true); toast('Gerando o PDF…');
+  try {
+    var b = await buildPdf();
+    await deliverDownload(new Blob([b.bytes], { type:'application/pdf' }), b.filename);
+    openModal('#doneModal'); $('#doneClose').focus();
+  } catch(e){
+    if (!e || e.code !== 'declined'){ console.error(e); toast('Não foi possível salvar o PDF.'); }
+  } finally { setBusy(false); }
+}
 $('#saveBtn').addEventListener('click', savePdf);
+
+/* ---------- enviar por e-mail / compartilhar ---------- */
+async function shareOrEmail(){
+  closeModal('#moreModal');
+  if (state.busy) return;
+  setBusy(true);
+  try {
+    var b = await buildPdf();
+    var file = new File([b.bytes], b.filename, { type:'application/pdf' });
+    if (navigator.canShare && navigator.canShare({ files:[file] })){
+      try {
+        await navigator.share({ files:[file], title:b.filename, text:'Segue o documento.' });
+      } catch(e){
+        if (e && e.name === 'AbortError') return;
+        if (e && e.name === 'NotAllowedError') toast('Toque em “Enviar por e-mail” de novo para concluir.');
+        else toast('Não foi possível compartilhar o arquivo.');
+      }
+    } else {
+      await deliverDownload(new Blob([b.bytes], { type:'application/pdf' }), b.filename);
+      toast('Anexe o PDF salvo ao e-mail.');
+      location.href = 'mailto:?subject=' + encodeURIComponent(b.filename) + '&body=' + encodeURIComponent('Segue o documento em anexo.');
+    }
+  } catch(e){ console.error(e); toast('Algo deu errado ao preparar o arquivo.'); }
+  finally { setBusy(false); }
+}
+
+/* ---------- imprimir ---------- */
+async function printPdf(){
+  closeModal('#moreModal');
+  if (state.busy) return;
+  setBusy(true); toast('Preparando a impressão…');
+  var area = $('#printArea');
+  try {
+    var b = await buildPdf();
+    var pdf = await pdfjsLib.getDocument({ data: b.bytes.slice(), isEvalSupported:false }).promise;
+    area.innerHTML = '';
+    for (var i = 1; i <= pdf.numPages; i++){
+      var pg = await pdf.getPage(i), v1 = pg.getViewport({ scale:1 });
+      var vp = pg.getViewport({ scale: Math.min(2.5, 1800 / Math.max(v1.width, v1.height)) });
+      var cv = document.createElement('canvas'); cv.width = Math.floor(vp.width); cv.height = Math.floor(vp.height);
+      await pg.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise;
+      var im = new Image(); im.src = cv.toDataURL('image/jpeg', 0.92);
+      try { await im.decode(); } catch(e){}
+      area.appendChild(im);
+    }
+    window.addEventListener('afterprint', function(){ area.innerHTML = ''; }, { once:true });
+    window.print();
+  } catch(e){ console.error(e); area.innerHTML = ''; toast('Não foi possível preparar a impressão.'); }
+  finally { setBusy(false); }
+}
+
+/* ---------- menu Mais ---------- */
+$('#moreBtn').addEventListener('click', function(){ openModal('#moreModal'); $('#moreClose').focus(); });
+$('#moreClose').addEventListener('click', function(){ closeModal('#moreModal'); });
+$('#rotPage').addEventListener('click', function(){
+  closeModal('#moreModal');
+  if (!rotatePage(state.pages[visiblePage().index], 90)) toast('Remova as assinaturas e textos desta página antes de girar.');
+});
+$('#rotAll').addEventListener('click', function(){
+  closeModal('#moreModal');
+  var skipped = 0;
+  state.pages.forEach(function(p){ if (!rotatePage(p, 90)) skipped++; });
+  if (skipped) toast('Páginas com assinatura ou texto não foram giradas.');
+});
+$('#printBtn').addEventListener('click', printPdf);
+$('#shareBtn').addEventListener('click', shareOrEmail);
 $('#doneClose').addEventListener('click', function(){ closeModal('#doneModal'); });
 
 document.addEventListener('keydown', function(e){
-  if (e.key === 'Escape') ['#padModal','#textModal','#doneModal'].forEach(closeModal);
+  if (e.key === 'Escape') ['#padModal','#textModal','#doneModal','#moreModal'].forEach(closeModal);
 });
 updateUI();
 
