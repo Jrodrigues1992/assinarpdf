@@ -274,7 +274,7 @@ async function openFile(file){
     state.bytes = bytes; state.name = file.name || 'documento.pdf'; state.pdf = pdf;
     state.items = []; state.sel = null; state.pages = []; state.built = null;
     if (observer) observer.disconnect();
-    viewer.innerHTML = '';
+    viewer.querySelectorAll('.page').forEach(function(n){ n.remove(); });
     $('#selbar').hidden = true;
 
     observer = new IntersectionObserver(function(entries){
