@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Assinar PDF</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1f3fbf">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<style>
+:root{
+  --bg:#e6eaf0; --surface:#ffffff; --ink:#16202e; --muted:#566272; --line:#c9d1dc;
+  --accent:#1f3fbf; --on-accent:#ffffff; --danger:#b3261e; --sel:#1f3fbf; --pen:#10236b;
+  --shadow:0 1px 2px rgba(20,30,50,.14),0 8px 22px rgba(20,30,50,.10);
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#10141a; --surface:#1a2029; --ink:#e8edf4; --muted:#9aa6b6; --line:#2d3643;
+    --accent:#8aa2ff; --on-accent:#0c1230; --danger:#ff8f86;
+    --shadow:0 1px 2px rgba(0,0,0,.5),0 8px 22px rgba(0,0,0,.4);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#10141a; --surface:#1a2029; --ink:#e8edf4; --muted:#9aa6b6; --line:#2d3643;
+  --accent:#8aa2ff; --on-accent:#0c1230; --danger:#ff8f86;
+  --shadow:0 1px 2px rgba(0,0,0,.5),0 8px 22px rgba(0,0,0,.4);
+  color-scheme:dark;
+}
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html{height:100%;background:var(--surface);scroll-padding-top:env(safe-area-inset-top,0px)}
+*,*::before,*::after{box-sizing:inherit}
+[hidden]{display:none!important}
+body{margin:0;height:100%;display:flex;flex-direction:column;background:var(--bg);color:var(--ink);
+  font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+
+.top{display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--surface);border-bottom:1px solid var(--line)}
+.top h1{margin:0;font-size:18px;font-weight:700;letter-spacing:-.01em;white-space:nowrap}
+.doc{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.2}
+.doc span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#docName{font-size:13px;font-weight:600}
+#docPage{font-size:12px;color:var(--muted)}
+
+.btn{min-height:44px;padding:0 16px;border-radius:10px;border:1px solid var(--line);background:var(--surface);
+  color:var(--ink);font:inherit;font-weight:600;cursor:pointer}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.btn.small{min-height:38px;padding:0 12px;font-size:14px}
+.btn.danger{color:var(--danger)}
+.btn:disabled{opacity:.42;cursor:default}
+.btn:focus-visible,input:focus-visible,a:focus-visible,.item:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+
+#viewer{flex:1;overflow:auto;padding:12px;-webkit-overflow-scrolling:touch;position:relative}
+.empty{margin:8vh auto 0;max-width:380px;padding:8px 12px;text-align:center}
+.empty h2{margin:0 0 8px;font-size:24px;line-height:1.2;letter-spacing:-.015em}
+.empty p{margin:0 0 20px;color:var(--muted)}
+.empty .btn{width:100%;min-height:52px;font-size:17px}
+.empty .gov{display:block;margin-top:22px;font-size:14px;color:var(--muted)}
+.empty .gov a{color:var(--accent)}
+
+.page{position:relative;width:100%;max-width:820px;margin:0 auto 14px;background:#fff;box-shadow:var(--shadow)}
+.page canvas{display:block;width:100%;height:100%}
+.ov{position:absolute;inset:0;overflow:hidden}
+.item{position:absolute;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;line-height:1}
+.item:active{cursor:grabbing}
+.item img{display:block;width:100%;pointer-events:none}
+.item.text{white-space:nowrap;font-family:Helvetica,Arial,sans-serif;color:var(--pen)}
+.item.sel{outline:2px dashed var(--sel);outline-offset:4px}
+
+.selbar{display:flex;gap:8px;padding:8px 14px;background:var(--surface);border-top:1px solid var(--line);align-items:center}
+.selbar .lbl{flex:1;font-size:13px;color:var(--muted)}
+.bar{display:flex;gap:10px;padding:10px 14px;background:var(--surface);border-top:1px solid var(--line)}
+.bar .btn{flex:1}
+.bar .btn.primary{flex:1.3}
+
+.modal{position:fixed;inset:0;z-index:20;background:rgba(8,12,20,.58);display:flex;align-items:flex-end;justify-content:center}
+.sheet{width:100%;max-width:560px;max-height:100%;overflow:auto;background:var(--surface);color:var(--ink);
+  border-radius:18px 18px 0 0;padding:18px 16px calc(16px + env(safe-area-inset-bottom,0px))}
+@media (min-width:620px){.modal{align-items:center}.sheet{border-radius:18px}}
+.sheet h2{margin:0 0 12px;font-size:20px;letter-spacing:-.01em}
+.sheet p{margin:0 0 14px;color:var(--muted)}
+.row{display:flex;gap:10px;margin-top:14px}
+.row .btn{flex:1}
+.row .btn.primary{flex:1.5}
+
+.padwrap{position:relative;height:min(38vh,220px);min-height:150px;background:#fff;border-radius:12px;border:1px solid var(--line);overflow:hidden}
+.padwrap canvas{display:block;width:100%;height:100%;touch-action:none;cursor:crosshair}
+.padwrap .rule{position:absolute;left:44px;right:18px;bottom:34px;border-top:1.5px solid #9aa5b5;pointer-events:none}
+.padwrap .x{position:absolute;left:16px;bottom:26px;font-size:24px;line-height:1;color:#7d8899;pointer-events:none;font-family:Georgia,"Times New Roman",serif}
+.padwrap .hint{position:absolute;left:0;right:0;top:50%;transform:translateY(-70%);text-align:center;color:#8a95a5;font-size:15px;pointer-events:none}
+.saved{display:flex;align-items:center;gap:12px;width:100%;padding:8px 12px;margin-bottom:12px;border:1px solid var(--line);
+  border-radius:12px;background:#fff;color:#16202e;font:inherit;font-weight:600;cursor:pointer;text-align:left}
+.saved img{height:38px;max-width:46%;object-fit:contain}
+.check{display:flex;gap:10px;align-items:center;margin-top:12px;font-size:14px;color:var(--muted)}
+.check input{width:20px;height:20px;accent-color:var(--accent)}
+.field{width:100%;min-height:48px;padding:0 12px;font:inherit;font-size:17px;border-radius:10px;border:1px solid var(--line);
+  background:var(--bg);color:var(--ink)}
+.linkbtn{display:inline-flex;align-items:center;justify-content:center;text-decoration:none}
+
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(96px + env(safe-area-inset-bottom,0px));z-index:30;
+  max-width:min(92vw,420px);padding:10px 16px;border-radius:10px;background:#16202e;color:#fff;font-size:14px;box-shadow:var(--shadow)}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <h1>Assinar PDF</h1>
+  <div class="doc"><span id="docName"></span><span id="docPage"></span></div>
+  <button class="btn small" id="openBtn" type="button">Abrir PDF</button>
+</header>
+
+<main id="viewer">
+  <section class="empty" id="empty">
+    <h2>Abra um PDF para assinar</h2>
+    <p>Leia o documento, assine com o dedo ou o mouse, posicione a assinatura e salve o PDF pronto. O arquivo fica no seu aparelho.</p>
+    <button class="btn primary" id="openBtn2" type="button">Escolher PDF</button>
+    <span class="gov">Precisa de validade jurídica? Depois de assinar aqui, você pode assinar também pelo <a href="https://assinador.iti.br" target="_blank" rel="noopener">Assinador gov.br</a>.</span>
+  </section>
+</main>
+
+<div class="selbar" id="selbar" hidden>
+  <span class="lbl" id="selLabel">Item selecionado</span>
+  <button class="btn small" id="smaller" type="button">Menor</button>
+  <button class="btn small" id="bigger" type="button">Maior</button>
+  <button class="btn small danger" id="remove" type="button">Remover</button>
+</div>
+
+<nav class="bar" aria-label="Ações">
+  <button class="btn" id="signBtn" type="button" disabled>Assinar</button>
+  <button class="btn" id="textBtn" type="button" disabled>Texto ou data</button>
+  <button class="btn primary" id="saveBtn" type="button" disabled>Salvar PDF</button>
+</nav>
+
+<input type="file" id="file" accept="application/pdf,.pdf" hidden>
+
+<!-- Assinatura -->
+<div class="modal" id="padModal" role="dialog" aria-modal="true" aria-labelledby="padTitle" hidden>
+  <div class="sheet">
+    <h2 id="padTitle">Sua assinatura</h2>
+    <button class="saved" id="useSaved" type="button" hidden>
+      <img id="savedImg" alt="Assinatura guardada"><span>Usar a assinatura guardada</span>
+    </button>
+    <div class="padwrap">
+      <canvas id="pad" aria-label="Área para desenhar a assinatura"></canvas>
+      <span class="x" aria-hidden="true">×</span><span class="rule"></span>
+      <span class="hint" id="padHint">Assine aqui com o dedo ou o mouse</span>
+    </div>
+    <label class="check"><input type="checkbox" id="keepSig" checked> Guardar neste aparelho para os próximos documentos</label>
+    <div class="row">
+      <button class="btn" id="padClear" type="button">Limpar</button>
+      <button class="btn" id="padCancel" type="button">Cancelar</button>
+      <button class="btn primary" id="padOk" type="button">Usar assinatura</button>
+    </div>
+  </div>
+</div>
+
+<!-- Texto -->
+<div class="modal" id="textModal" role="dialog" aria-modal="true" aria-labelledby="textTitle" hidden>
+  <div class="sheet">
+    <h2 id="textTitle">Adicionar texto</h2>
+    <input class="field" id="textInput" type="text" maxlength="120" placeholder="Nome, cidade, data…" autocomplete="off">
+    <div class="row">
+      <button class="btn" id="textDate" type="button">Data de hoje</button>
+    </div>
+    <div class="row">
+      <button class="btn" id="textCancel" type="button">Cancelar</button>
+      <button class="btn primary" id="textOk" type="button">Adicionar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Depois de salvar -->
+<div class="modal" id="doneModal" role="dialog" aria-modal="true" aria-labelledby="doneTitle" hidden>
+  <div class="sheet">
+    <h2 id="doneTitle">PDF salvo</h2>
+    <p>Esta é uma assinatura desenhada, boa para o dia a dia. Para ter assinatura eletrônica avançada com validade jurídica, envie o PDF salvo ao Assinador gov.br (exige conta gov.br nível prata ou ouro).</p>
+    <div class="row">
+      <button class="btn" id="doneClose" type="button">Fechar</button>
+      <a class="btn primary linkbtn" href="https://assinador.iti.br" target="_blank" rel="noopener">Abrir Assinador gov.br</a>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<script>
+(function(){
+'use strict';
+
+var $ = function(s){ return document.querySelector(s); };
+var clamp = function(v,a,b){ return Math.max(a, Math.min(b, v)); };
+var WORKER = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+var SIG_KEY = 'assinar-pdf:assinatura';
+
+var viewer = $('#viewer');
+var state = { bytes:null, name:'documento.pdf', pdf:null, pages:[], items:[], sel:null, nextId:1, busy:false };
+var observer = null;
+
+/* ---------- utilidades ---------- */
+var toastTimer = null;
+function toast(msg){
+  var t = $('#toast'); t.textContent = msg; t.hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(function(){ t.hidden = true; }, 4200);
+}
+function openModal(id){ var m = $(id); m.hidden = false; return m; }
+function closeModal(id){ $(id).hidden = true; }
+function loadImg(src){
+  return new Promise(function(res,rej){ var i = new Image(); i.onload = function(){ res(i); }; i.onerror = rej; i.src = src; });
+}
+function getSavedSig(){ try { return localStorage.getItem(SIG_KEY); } catch(e){ return null; } }
+function setSavedSig(v){ try { if (v) localStorage.setItem(SIG_KEY, v); else localStorage.removeItem(SIG_KEY); } catch(e){} }
+
+/* ---------- abrir PDF ---------- */
+function pickFile(){ $('#file').click(); }
+$('#openBtn').addEventListener('click', pickFile);
+$('#openBtn2').addEventListener('click', pickFile);
+$('#file').addEventListener('change', function(e){
+  var f = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (f) openFile(f);
+});
+['dragover','drop'].forEach(function(ev){
+  document.addEventListener(ev, function(e){
+    e.preventDefault();
+    if (ev === 'drop' && e.dataTransfer && e.dataTransfer.files[0]) openFile(e.dataTransfer.files[0]);
+  });
+});
+
+async function openFile(file){
+  if (!window.pdfjsLib || !window.PDFLib){
+    toast('O leitor ainda está carregando ou foi bloqueado. Tente novamente em instantes.');
+    return;
+  }
+  if (!/pdf$/i.test(file.type) && !/\.pdf$/i.test(file.name)){ toast('Escolha um arquivo PDF.'); return; }
+  try {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = WORKER;
+    var bytes = new Uint8Array(await file.arrayBuffer());
+    var pdf = await pdfjsLib.getDocument({ data: bytes.slice(), isEvalSupported:false }).promise;
+
+    state.bytes = bytes; state.name = file.name || 'documento.pdf'; state.pdf = pdf;
+    state.items = []; state.sel = null; state.pages = [];
+    if (observer) observer.disconnect();
+    viewer.innerHTML = '';
+    $('#selbar').hidden = true;
+
+    observer = new IntersectionObserver(function(entries){
+      entries.forEach(function(en){
+        if (en.isIntersecting){
+          var p = state.pages[Number(en.target.dataset.i)];
+          if (p && !p.rendered) renderPage(p);
+        }
+      });
+    }, { root: viewer, rootMargin: '900px 0px' });
+
+    for (var i = 1; i <= pdf.numPages; i++){
+      var pg = await pdf.getPage(i);
+      var vp = pg.getViewport({ scale:1 });
+      var wrap = document.createElement('div');
+      wrap.className = 'page'; wrap.dataset.i = i - 1;
+      wrap.style.aspectRatio = vp.width + ' / ' + vp.height;
+      var canvas = document.createElement('canvas');
+      var ov = document.createElement('div'); ov.className = 'ov';
+      wrap.appendChild(canvas); wrap.appendChild(ov);
+      viewer.appendChild(wrap);
+      state.pages.push({ wrap:wrap, canvas:canvas, ov:ov, w:vp.width, h:vp.height, rendered:false, renderedW:0, index:i-1 });
+      observer.observe(wrap);
+    }
+    viewer.scrollTop = 0;
+    $('#docName').textContent = state.name;
+    updateUI(); updateIndicator();
+  } catch(err){
+    if (err && err.name === 'PasswordException') toast('Este PDF tem senha e não pode ser aberto aqui.');
+    else toast('Não foi possível abrir este PDF.');
+    console.error(err);
+  }
+}
+
+async function renderPage(p){
+  p.rendered = true;
+  try {
+    var pg = await state.pdf.getPage(p.index + 1);
+    var cssW = p.wrap.clientWidth || 600;
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var vp = pg.getViewport({ scale: (cssW / p.w) * dpr });
+    p.canvas.width = Math.floor(vp.width); p.canvas.height = Math.floor(vp.height);
+    p.renderedW = cssW;
+    await pg.render({ canvasContext: p.canvas.getContext('2d'), viewport: vp }).promise;
+  } catch(e){ p.rendered = false; console.error(e); }
+}
+
+function visiblePage(){
+  var vr = viewer.getBoundingClientRect(), best = 0, bv = -1;
+  state.pages.forEach(function(p,i){
+    var r = p.wrap.getBoundingClientRect();
+    var v = Math.max(0, Math.min(r.bottom, vr.bottom) - Math.max(r.top, vr.top));
+    if (v > bv){ bv = v; best = i; }
+  });
+  var r2 = state.pages[best].wrap.getBoundingClientRect();
+  var cy = (Math.max(r2.top, vr.top) + Math.min(r2.bottom, vr.bottom)) / 2;
+  return { index: best, fy: clamp((cy - r2.top) / r2.height, 0.08, 0.92) };
+}
+var rafId = 0;
+function updateIndicator(){
+  if (!state.pages.length){ $('#docPage').textContent = ''; return; }
+  $('#docPage').textContent = 'Página ' + (visiblePage().index + 1) + ' de ' + state.pages.length;
+}
+viewer.addEventListener('scroll', function(){
+  cancelAnimationFrame(rafId); rafId = requestAnimationFrame(updateIndicator);
+}, { passive:true });
+
+var resizeT = 0;
+function onResize(){
+  clearTimeout(resizeT);
+  resizeT = setTimeout(function(){
+    state.pages.forEach(function(p){
+      if (p.rendered && Math.abs(p.wrap.clientWidth - p.renderedW) > 40){
+        p.rendered = false; observer.unobserve(p.wrap); observer.observe(p.wrap);
+      }
+    });
+    state.items.forEach(function(it){ if (it.kind === 'text') place(it); });
+  }, 150);
+}
+window.addEventListener('resize', onResize);
+
+/* ---------- itens (assinaturas e textos) ---------- */
+function mountItem(it){
+  var p = state.pages[it.page];
+  var el = document.createElement('div');
+  el.className = 'item ' + it.kind; el.tabIndex = 0;
+  if (it.kind === 'sig'){
+    var img = new Image(); img.src = it.src; img.alt = 'Assinatura'; img.draggable = false; el.appendChild(img);
+  } else { el.textContent = it.text; }
+  p.ov.appendChild(el); it.el = el;
+  place(it); bindDrag(it);
+}
+function place(it){
+  var p = state.pages[it.page], el = it.el;
+  el.style.left = (it.x * 100) + '%'; el.style.top = (it.y * 100) + '%';
+  if (it.kind === 'sig') el.style.width = (it.w * 100) + '%';
+  else el.style.fontSize = (p.wrap.clientWidth * it.size) + 'px';
+}
+function clampItem(it){
+  var p = state.pages[it.page];
+  var bw = it.el.offsetWidth / p.wrap.clientWidth, bh = it.el.offsetHeight / p.wrap.clientHeight;
+  it.x = clamp(it.x, 0, Math.max(0, 1 - bw)); it.y = clamp(it.y, 0, Math.max(0, 1 - bh));
+}
+function bindDrag(it){
+  var el = it.el, st = null;
+  el.addEventListener('pointerdown', function(e){
+    e.preventDefault(); select(it.id);
+    st = { sx:e.clientX, sy:e.clientY, x:it.x, y:it.y, r:state.pages[it.page].wrap.getBoundingClientRect() };
+    el.setPointerCapture(e.pointerId);
+  });
+  el.addEventListener('pointermove', function(e){
+    if (!st) return;
+    it.x = st.x + (e.clientX - st.sx) / st.r.width; it.y = st.y + (e.clientY - st.sy) / st.r.height;
+    clampItem(it); place(it);
+  });
+  var end = function(){ st = null; };
+  el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
+  el.addEventListener('keydown', function(e){
+    var d = 0.01, m = { ArrowLeft:[-d,0], ArrowRight:[d,0], ArrowUp:[0,-d], ArrowDown:[0,d] }[e.key];
+    if (m){ e.preventDefault(); it.x += m[0]; it.y += m[1]; clampItem(it); place(it); }
+    else if (e.key === 'Delete' || e.key === 'Backspace'){ e.preventDefault(); removeSel(); }
+  });
+}
+function getSel(){ return state.items.find(function(i){ return i.id === state.sel; }); }
+function select(id){
+  state.sel = id;
+  state.items.forEach(function(it){ it.el.classList.toggle('sel', it.id === id); });
+  var it = getSel();
+  $('#selbar').hidden = !it;
+  if (it) $('#selLabel').textContent = it.kind === 'sig' ? 'Assinatura selecionada' : 'Texto selecionado';
+}
+viewer.addEventListener('pointerdown', function(e){
+  if (!e.target.closest('.item') && state.sel != null) select(null);
+});
+function addItem(it){
+  it.id = state.nextId++; state.items.push(it); mountItem(it); clampItem(it); place(it);
+  select(it.id); updateUI();
+}
+function scaleSel(f){
+  var it = getSel(); if (!it) return;
+  var p = state.pages[it.page];
+  var cw = p.wrap.clientWidth, ch = p.wrap.clientHeight;
+  var cx = it.x + (it.el.offsetWidth / cw) / 2, cy = it.y + (it.el.offsetHeight / ch) / 2;
+  if (it.kind === 'sig') it.w = clamp(it.w * f, 0.06, 0.95); else it.size = clamp(it.size * f, 0.012, 0.12);
+  place(it);
+  it.x = cx - (it.el.offsetWidth / cw) / 2; it.y = cy - (it.el.offsetHeight / ch) / 2;
+  clampItem(it); place(it);
+}
+function removeSel(){
+  var it = getSel(); if (!it) return;
+  it.el.remove(); state.items = state.items.filter(function(i){ return i !== it; });
+  select(null); updateUI();
+}
+$('#bigger').addEventListener('click', function(){ scaleSel(1.15); });
+$('#smaller').addEventListener('click', function(){ scaleSel(1 / 1.15); });
+$('#remove').addEventListener('click', removeSel);
+
+function updateUI(){
+  var has = state.pages.length > 0;
+  $('#empty').hidden = has;
+  $('#signBtn').disabled = !has; $('#textBtn').disabled = !has;
+  $('#saveBtn').disabled = !(has && state.items.length) || state.busy;
+}
+
+/* ---------- caderno de assinatura ---------- */
+var pad = $('#pad'), pctx = pad.getContext('2d');
+var drawing = false, last = null, inked = false;
+
+function setupPad(){
+  var r = pad.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 3);
+  pad.width = Math.max(1, Math.round(r.width * dpr)); pad.height = Math.max(1, Math.round(r.height * dpr));
+  pctx.lineCap = 'round'; pctx.lineJoin = 'round';
+  pctx.lineWidth = 3.2 * dpr; pctx.strokeStyle = '#10236b';
+  inked = false; $('#padHint').hidden = false;
+}
+function padPoint(e){
+  var r = pad.getBoundingClientRect();
+  return { x:(e.clientX - r.left) * (pad.width / r.width), y:(e.clientY - r.top) * (pad.height / r.height) };
+}
+pad.addEventListener('pointerdown', function(e){
+  e.preventDefault(); pad.setPointerCapture(e.pointerId);
+  drawing = true; last = padPoint(e); inked = true; $('#padHint').hidden = true;
+  pctx.beginPath(); pctx.arc(last.x, last.y, pctx.lineWidth / 2, 0, Math.PI * 2); pctx.fillStyle = '#10236b'; pctx.fill();
+  pctx.beginPath(); pctx.moveTo(last.x, last.y);
+});
+pad.addEventListener('pointermove', function(e){
+  if (!drawing) return;
+  var p = padPoint(e), mid = { x:(last.x + p.x) / 2, y:(last.y + p.y) / 2 };
+  pctx.quadraticCurveTo(last.x, last.y, mid.x, mid.y); pctx.stroke();
+  pctx.beginPath(); pctx.moveTo(mid.x, mid.y); last = p;
+});
+['pointerup','pointercancel'].forEach(function(ev){ pad.addEventListener(ev, function(){ drawing = false; }); });
+
+function cropPad(){
+  var w = pad.width, h = pad.height, d = pctx.getImageData(0, 0, w, h).data;
+  var x0 = w, y0 = h, x1 = 0, y1 = 0;
+  for (var y = 0; y < h; y++) for (var x = 0; x < w; x++){
+    if (d[(y * w + x) * 4 + 3] > 8){ if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  }
+  if (x1 <= x0 || y1 <= y0) return null;
+  var m = 8; x0 = Math.max(0, x0 - m); y0 = Math.max(0, y0 - m); x1 = Math.min(w, x1 + m); y1 = Math.min(h, y1 + m);
+  var c = document.createElement('canvas'); c.width = x1 - x0; c.height = y1 - y0;
+  c.getContext('2d').drawImage(pad, x0, y0, c.width, c.height, 0, 0, c.width, c.height);
+  return c.toDataURL('image/png');
+}
+function openPad(){
+  var saved = getSavedSig();
+  $('#useSaved').hidden = !saved;
+  if (saved) $('#savedImg').src = saved;
+  openModal('#padModal'); setupPad();
+  $('#padOk').focus();
+}
+$('#signBtn').addEventListener('click', openPad);
+$('#padClear').addEventListener('click', setupPad);
+$('#padCancel').addEventListener('click', function(){ closeModal('#padModal'); });
+$('#padOk').addEventListener('click', function(){
+  var url = inked ? cropPad() : null;
+  if (!url){ toast('Desenhe sua assinatura antes de continuar.'); return; }
+  if ($('#keepSig').checked) setSavedSig(url);
+  closeModal('#padModal'); placeSignature(url);
+});
+$('#useSaved').addEventListener('click', function(){
+  var s = getSavedSig(); if (!s) return;
+  closeModal('#padModal'); placeSignature(s);
+});
+async function placeSignature(src){
+  try {
+    var img = await loadImg(src), v = visiblePage(), p = state.pages[v.index];
+    var aspect = img.naturalWidth / img.naturalHeight, w = 0.32;
+    var hFrac = w * (p.w / p.h) / aspect;
+    addItem({ kind:'sig', page:v.index, src:src, aspect:aspect, w:w, x:0.5 - w / 2, y:v.fy - hFrac / 2 });
+  } catch(e){ toast('Não foi possível usar esta assinatura.'); }
+}
+
+/* ---------- texto ---------- */
+$('#textBtn').addEventListener('click', function(){
+  $('#textInput').value = ''; openModal('#textModal'); $('#textInput').focus();
+});
+$('#textDate').addEventListener('click', function(){
+  $('#textInput').value = new Date().toLocaleDateString('pt-BR'); $('#textInput').focus();
+});
+$('#textCancel').addEventListener('click', function(){ closeModal('#textModal'); });
+function confirmText(){
+  var t = $('#textInput').value.trim();
+  if (!t){ toast('Digite o texto que quer adicionar.'); return; }
+  closeModal('#textModal');
+  var v = visiblePage();
+  addItem({ kind:'text', page:v.index, text:t, size:0.028, x:0.2, y:v.fy });
+}
+$('#textOk').addEventListener('click', confirmText);
+$('#textInput').addEventListener('keydown', function(e){ if (e.key === 'Enter') confirmText(); });
+
+/* ---------- salvar ---------- */
+function safeText(font, t){
+  return Array.from(t).map(function(ch){ try { font.encodeText(ch); return ch; } catch(e){ return '?'; } }).join('');
+}
+async function savePdf(){
+  if (state.busy || !state.items.length) return;
+  state.busy = true; updateUI(); toast('Gerando o PDF…');
+  try {
+    var L = PDFLib;
+    var doc = await L.PDFDocument.load(state.bytes, { ignoreEncryption:true });
+    var font = await doc.embedFont(L.StandardFonts.Helvetica);
+    var cache = {}, rotated = false;
+    for (var k = 0; k < state.items.length; k++){
+      var it = state.items[k], page = doc.getPage(it.page);
+      var cb = page.getCropBox(), W = cb.width, H = cb.height;
+      if (page.getRotation().angle % 360 !== 0) rotated = true;
+      if (it.kind === 'sig'){
+        var img = cache[it.src] || (cache[it.src] = await doc.embedPng(it.src));
+        var w = it.w * W, h = w / it.aspect;
+        page.drawImage(img, { x: cb.x + it.x * W, y: cb.y + H - it.y * H - h, width:w, height:h });
+      } else {
+        var fs = it.size * W;
+        page.drawText(safeText(font, it.text), { x: cb.x + it.x * W, y: cb.y + H - it.y * H - fs * 0.84, size:fs, font:font, color:L.rgb(0.063, 0.137, 0.42) });
+      }
+    }
+    var out = await doc.save();
+    var filename = state.name.replace(/\.pdf$/i, '') + '-assinado.pdf';
+    var blob = new Blob([out], { type:'application/pdf' });
+    var dl = null;
+    try { dl = (window.claude && window.claude.use) ? await window.claude.use('downloads') : null; } catch(e){ dl = null; }
+    if (dl){
+      try {
+        await dl.save({ filename:filename, data:blob });
+        openModal('#doneModal'); $('#doneClose').focus();
+        if (rotated) toast('Atenção: há páginas giradas no PDF; confira a posição da assinatura.');
+      } catch(e){
+        if (!e || e.code !== 'declined') toast('Não foi possível salvar o arquivo neste visualizador.');
+      }
+    } else {
+      var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      toast('Se o download não começar, abra esta página direto no navegador.');
+    }
+  } catch(e){
+    console.error(e); toast('Algo deu errado ao gerar o PDF.');
+  } finally {
+    state.busy = false; updateUI();
+  }
+}
+$('#saveBtn').addEventListener('click', savePdf);
+$('#doneClose').addEventListener('click', function(){ closeModal('#doneModal'); });
+
+document.addEventListener('keydown', function(e){
+  if (e.key === 'Escape') ['#padModal','#textModal','#doneModal'].forEach(closeModal);
+});
+updateUI();
+
+/* ---------- app instalado: service worker e PDF recebido por "Compartilhar" ---------- */
+if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)){
+  navigator.serviceWorker.register('sw.js').catch(function(){});
+}
+(async function(){
+  if (!/[?&]shared=1/.test(location.search) || !window.caches) return;
+  try {
+    var c = await caches.open('shared-pdf');
+    var key = new URL('shared-file', location.href).href;
+    var r = await c.match(key);
+    if (r){
+      var blob = await r.blob();
+      var name = decodeURIComponent(r.headers.get('X-Filename') || 'documento.pdf');
+      await c.delete(key);
+      history.replaceState(null, '', location.pathname);
+      await openFile(new File([blob], name, { type:'application/pdf' }));
+    }
+  } catch(e){ console.error(e); toast('Não foi possível abrir o PDF compartilhado.'); }
+})();
+})();
+</script>
+</body>
+</html>
